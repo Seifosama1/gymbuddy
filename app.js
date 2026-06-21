@@ -2552,7 +2552,6 @@ function filterExercises() {
           </div>
           <div style="display:flex;gap:8px">
             <button class="btn btn-sm btn-primary" onclick="event.stopPropagation(); addToWorkoutQueue('${e.id}', '${escHtml(e.name)}')" style="padding:6px 12px">+ add</button>
-            <button class="btn btn-sm btn-ghost" onclick="event.stopPropagation(); startSessionForExercise('${e.id}')" style="padding:6px 12px">▶ Start</button>
           </div>
         </div>`).join('')}
       ${remaining > 0 ? `
