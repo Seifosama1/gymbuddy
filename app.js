@@ -57,6 +57,10 @@ const isLowEnd = () => {
   return false;
 };
 
+if (isLowEnd()) {
+  document.body.classList.add('low-end');
+}
+
 // Throttle wrapper – limits function calls to once per `delay` ms
 function throttle(fn, delay = 300) {
   let lastCall = 0;
@@ -1434,9 +1438,28 @@ function renderCalorieTracker() {
   // ── Goal & progress bar ─────────────────────────────────────────
   const goalTextEl = document.getElementById('calorie-goal-text');
   if (goalTextEl) goalTextEl.textContent = goalCal;
-  const percent = Math.min(100, (netCalories / goalCal) * 100);
+  const percent  = Math.min(100, (netCalories / goalCal) * 100);
+  const goalHitC = netCalories >= goalCal;
   const progressBar = document.getElementById('calorie-progress-bar');
-  if (progressBar) progressBar.style.width = percent + '%';
+  if (progressBar) {
+    progressBar.style.width = percent + '%';
+    progressBar.classList.toggle('goal-reached', goalHitC);
+  }
+
+  // ── Calorie card glow ─────────────────────────────────────────
+  const summaryCard = document.querySelector('.calorie-summary-card');
+  if (summaryCard) summaryCard.classList.toggle('goal-reached', goalHitC);
+
+  // ── Play fanfare once per goal crossing ───────────────────────
+  const todayKeyC  = new Date().toISOString().split('T')[0];
+  const celebKeyC  = `jimbuddy_cal_goal_celebrated_${todayKeyC}`;
+  if (goalHitC && !sessionStorage.getItem(celebKeyC)) {
+    sessionStorage.setItem(celebKeyC, '1');
+    if (typeof SoundManager !== 'undefined' && SoundManager.goalReached) {
+      setTimeout(() => SoundManager.goalReached(), 120);
+    }
+    setTimeout(() => toast('🎉 Calorie goal reached! Well done!'), 200);
+  }
   
   // ── Macros ──────────────────────────────────────────────────────
   const proteinEl = document.getElementById('protein-total');
@@ -2089,11 +2112,7 @@ function openScheduledSessionModal(exercise) {
     </div>
     <div class="session-exercise-title">${escHtml(exercise.name)}</div>
     ${isCardio ? renderCardioSessionInputs(exercise) : renderStrengthSessionInputs(exercise, sets)}
-    <div class="rest-timer" id="rest-timer-box">
-      <div class="timer-display" id="timer-display">0:00</div>
-      <div class="timer-label">REST · tap to skip</div>
-      <button class="btn btn-sm btn-ghost" style="margin-top:8px" onclick="skipTimer()">Skip</button>
-    </div>
+    ${restTimerMarkup()}
   `;
   
   openModal('session-modal');
@@ -2444,7 +2463,10 @@ function renderDashboard() {
   const waterTextEl = document.getElementById('dash-water-text');
   const waterBarEl = document.getElementById('dash-water-bar');
   if (waterTextEl) waterTextEl.textContent = `${todayWater} / ${goal} ml`;
-  if (waterBarEl) waterBarEl.style.width = Math.min(100, (todayWater / goal) * 100) + '%';
+  if (waterBarEl) {
+    waterBarEl.style.width = Math.min(100, (todayWater / goal) * 100) + '%';
+    waterBarEl.classList.toggle('goal-reached', todayWater >= goal);
+  }
 
   const wlTextEl = document.getElementById('dash-wl-text');
   const wlBarEl = document.getElementById('dash-wl-bar');
@@ -2671,14 +2693,43 @@ function openSessionModal(exercise) {
   body.innerHTML = `
     <div class="session-exercise-title">${escHtml(exercise.name)}</div>
     ${isCardio ? renderCardioSessionInputs(exercise) : renderStrengthSessionInputs(exercise, sets)}
-    <div class="rest-timer" id="rest-timer-box">
-      <div class="timer-display" id="timer-display">0:00</div>
-      <div class="timer-label">REST · tap to skip</div>
-      <button class="btn btn-sm btn-ghost" style="margin-top:8px" onclick="skipTimer()">Skip</button>
-    </div>
+    ${restTimerMarkup()}
   `;
 
   openModal('session-modal');
+}
+
+function buildProgressiveOverloadTip(exercise) {
+  if (!exercise || exercise.isCardio) return '';
+  const history = getExerciseSessionHistory(exercise);
+  if (!history.length) return '';
+
+  const last = history[0].set;
+  const targetReps = Number(exercise.reps) || 10;
+
+  let tip = '';
+  let icon = '📈';
+
+  if (last.weight > 0 && last.reps >= targetReps) {
+    const jump = last.weight >= 40 ? 2.5 : 1;
+    tip = `Last: ${formatKg(last.weight)}kg × ${last.reps} reps — try <strong>${formatKg(last.weight + jump)}kg</strong> today`;
+    icon = '⬆️';
+  } else if (last.weight > 0 && last.reps < targetReps) {
+    tip = `Last: ${formatKg(last.weight)}kg × ${last.reps} reps — aim for <strong>${targetReps} reps</strong> today`;
+    icon = '🎯';
+  } else if (last.weight === 0 && last.reps > 0) {
+    tip = `Last: bodyweight × ${last.reps} reps — aim for <strong>${last.reps + 2} reps</strong> today`;
+    icon = '🎯';
+  } else {
+    return '';
+  }
+
+  return `
+    <div class="overload-tip-card">
+      <span class="overload-tip-icon">${icon}</span>
+      <span class="overload-tip-text">${tip}</span>
+    </div>
+  `;
 }
 
 function renderStrengthSessionInputs(exercise, sets) {
@@ -2707,6 +2758,7 @@ function renderStrengthSessionInputs(exercise, sets) {
         <div class="set-check" id="set-check-${i}" onclick="toggleSetCheck(${i}, ${exercise.rest})"></div>
       </div>`).join('')}
     <div style="margin-top:4px;font-size:12px;color:var(--text3)">Tap ✓ to mark set done · rest timer starts automatically</div>
+    ${buildProgressiveOverloadTip(exercise)}
   `;
 }
 
@@ -2793,43 +2845,219 @@ function checkAllQueuedSets(totalSets) {
   toast('All sets marked done ✅');
 }
 
+// ─── Rest Timer (ring + spinning loop + ticks + alarm) ───────────────
+function restTimerMarkup() {
+  return `
+    <div class="rest-timer" id="rest-timer-box">
+      <div class="rest-timer-ring" id="timer-ring" style="--progress:100">
+        <div class="timer-display" id="timer-display">0:00</div>
+      </div>
+      <div class="timer-label" id="timer-label">REST · tap Skip to cut it short</div>
+      <div class="rest-timer-actions">
+        <button class="btn btn-sm btn-ghost" id="timer-skip-btn" onclick="skipTimer()">Skip</button>
+        <button class="btn btn-sm btn-primary timer-finish-btn" id="timer-finish-btn" onclick="finishRestTimer()" style="display:none">🔇 Finish</button>
+      </div>
+    </div>
+  `;
+}
+
 let timerInterval;
-let timerAnimationId;
+let timerAlarmInterval;
+let timerTotalSeconds = 0;
+
 function startRestTimer(seconds) {
-  const box = document.getElementById('rest-timer-box');
+  const box     = document.getElementById('rest-timer-box');
   const display = document.getElementById('timer-display');
+  const ring    = document.getElementById('timer-ring');
+  const label   = document.getElementById('timer-label');
+  const skipBtn = document.getElementById('timer-skip-btn');
+  const finishBtn = document.getElementById('timer-finish-btn');
   if (!box || !display) return;
-  
-  // Cancel any existing timer
+
+  // Cancel any existing timer/alarm before starting a fresh one
   if (timerInterval) clearInterval(timerInterval);
-  if (timerAnimationId) cancelAnimationFrame(timerAnimationId);
-  
+  if (timerAlarmInterval) clearInterval(timerAlarmInterval);
+
+  box.classList.remove('alerting');
   box.classList.add('active');
+  if (label) label.textContent = 'REST · tap Skip to cut it short';
+  if (skipBtn) skipBtn.style.display = '';
+  if (finishBtn) finishBtn.style.display = 'none';
+
+  timerTotalSeconds = seconds;
   let remaining = seconds;
   display.textContent = formatTime(remaining);
-  
-  // Use setInterval but throttle updates
+  if (ring) ring.style.setProperty('--progress', 100);
+
   timerInterval = setInterval(() => {
     remaining--;
-    display.textContent = formatTime(remaining);
-    if (remaining <= 0) {
+    display.textContent = formatTime(Math.max(0, remaining));
+    if (ring) ring.style.setProperty('--progress', Math.max(0, (remaining / timerTotalSeconds) * 100));
+    bumpTimerTick();
+
+    if (remaining > 0) {
+      if (typeof SoundManager !== 'undefined') {
+        remaining <= 3 ? SoundManager.timerTickWarn() : SoundManager.timerTick();
+      }
+    } else {
       clearInterval(timerInterval);
-      box.classList.remove('active');
-      toast('⏱ Rest done! Next set!');
+      startTimerAlarm();
     }
   }, 1000);
 }
 
+// Quick visual "tic" pulse on the digits, restarted every second to match the tick sound
+function bumpTimerTick() {
+  const display = document.getElementById('timer-display');
+  if (!display) return;
+  display.classList.remove('tick-bump');
+  void display.offsetWidth; // force reflow so the animation can restart
+  display.classList.add('tick-bump');
+}
+
+// Rest period is over — flash + beep on a loop until the user taps Finish
+function startTimerAlarm() {
+  const box       = document.getElementById('rest-timer-box');
+  const label     = document.getElementById('timer-label');
+  const skipBtn   = document.getElementById('timer-skip-btn');
+  const finishBtn = document.getElementById('timer-finish-btn');
+  if (!box) return;
+
+  box.classList.add('alerting');
+  if (label) label.textContent = '⏰ Rest done — let\'s go!';
+  if (skipBtn) skipBtn.style.display = 'none';
+  if (finishBtn) finishBtn.style.display = '';
+
+  if (typeof SoundManager !== 'undefined') SoundManager.timerDone();
+
+  if (timerAlarmInterval) clearInterval(timerAlarmInterval);
+  timerAlarmInterval = setInterval(() => {
+    if (typeof SoundManager !== 'undefined') SoundManager.alarmBeep();
+  }, 900);
+}
+
+// Stops the beeping alarm once the lifter is ready for the next set
+function finishRestTimer() {
+  if (timerAlarmInterval) { clearInterval(timerAlarmInterval); timerAlarmInterval = null; }
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+  const box = document.getElementById('rest-timer-box');
+  if (box) box.classList.remove('active', 'alerting');
+  toast('💪 Back to it!');
+}
+
 function skipTimer() {
-  if (timerInterval) clearInterval(timerInterval);
-  if (timerAnimationId) cancelAnimationFrame(timerAnimationId);
-  document.getElementById('rest-timer-box')?.classList.remove('active');
+  if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+  if (timerAlarmInterval) { clearInterval(timerAlarmInterval); timerAlarmInterval = null; }
+  document.getElementById('rest-timer-box')?.classList.remove('active', 'alerting');
 }
 
 function formatTime(s) {
   const m = Math.floor(s / 60), sec = s % 60;
   return `${m}:${sec.toString().padStart(2,'0')}`;
 }
+
+// ─── Standalone Rest Timer (Workouts page) ───────────────
+let srtInterval = null;
+let srtAlarmInterval = null;
+let srtTotalSeconds = 0;
+let srtRemaining = 0;
+let srtPaused = false;
+
+function srtStart(seconds) {
+  // Clear any running timer first
+  if (srtInterval) clearInterval(srtInterval);
+  if (srtAlarmInterval) clearInterval(srtAlarmInterval);
+
+  srtTotalSeconds = seconds;
+  srtRemaining = seconds;
+  srtPaused = false;
+
+  const box       = document.getElementById('srt-box');
+  const display   = document.getElementById('srt-display');
+  const label     = document.getElementById('srt-label');
+  const ring      = document.getElementById('srt-ring');
+  const pauseBtn  = document.getElementById('srt-pause-btn');
+  const finishBtn = document.getElementById('srt-finish-btn');
+
+  if (!box || !display) return;
+
+  box.style.display = '';
+  box.classList.remove('alerting');
+  if (label)     label.textContent   = 'resting…';
+  if (pauseBtn)  { pauseBtn.style.display = ''; pauseBtn.textContent = '⏸ Pause'; }
+  if (finishBtn) finishBtn.style.display = 'none';
+  if (ring)      ring.style.setProperty('--progress', 100);
+  display.textContent = formatTime(srtRemaining);
+
+  if (typeof SoundManager !== 'undefined') SoundManager.tap();
+
+  srtInterval = setInterval(() => {
+    if (srtPaused) return;
+    srtRemaining--;
+    const pct = Math.max(0, (srtRemaining / srtTotalSeconds) * 100);
+    display.textContent = formatTime(Math.max(0, srtRemaining));
+    if (ring) ring.style.setProperty('--progress', pct);
+
+    if (typeof SoundManager !== 'undefined') {
+      srtRemaining <= 3 && srtRemaining > 0 ? SoundManager.timerTickWarn() : SoundManager.timerTick();
+    }
+
+    if (srtRemaining <= 0) {
+      clearInterval(srtInterval);
+      srtInterval = null;
+      _srtStartAlarm();
+    }
+  }, 1000);
+}
+
+function srtStartCustom() {
+  const val = parseInt(document.getElementById('srt-custom-input')?.value);
+  if (!val || val < 1) { toast('Enter a valid duration in seconds'); return; }
+  srtStart(val);
+}
+
+function _srtStartAlarm() {
+  const box       = document.getElementById('srt-box');
+  const label     = document.getElementById('srt-label');
+  const pauseBtn  = document.getElementById('srt-pause-btn');
+  const finishBtn = document.getElementById('srt-finish-btn');
+
+  if (box) box.classList.add('alerting');
+  if (label)     label.textContent    = '⏰ Rest done — let\'s go!';
+  if (pauseBtn)  pauseBtn.style.display  = 'none';
+  if (finishBtn) finishBtn.style.display = '';
+
+  if (typeof SoundManager !== 'undefined') SoundManager.timerDone();
+
+  if (srtAlarmInterval) clearInterval(srtAlarmInterval);
+  srtAlarmInterval = setInterval(() => {
+    if (typeof SoundManager !== 'undefined') SoundManager.alarmBeep();
+  }, 900);
+}
+
+function srtSkip() {
+  if (srtInterval)      { clearInterval(srtInterval);      srtInterval = null; }
+  if (srtAlarmInterval) { clearInterval(srtAlarmInterval); srtAlarmInterval = null; }
+  srtPaused = false;
+  const box = document.getElementById('srt-box');
+  if (box) { box.style.display = 'none'; box.classList.remove('alerting'); }
+}
+
+function srtTogglePause() {
+  const btn = document.getElementById('srt-pause-btn');
+  srtPaused = !srtPaused;
+  if (btn) btn.textContent = srtPaused ? '▶ Resume' : '⏸ Pause';
+}
+
+function srtFinish() {
+  if (srtAlarmInterval) { clearInterval(srtAlarmInterval); srtAlarmInterval = null; }
+  if (srtInterval)      { clearInterval(srtInterval);      srtInterval = null; }
+  srtPaused = false;
+  const box = document.getElementById('srt-box');
+  if (box) { box.style.display = 'none'; box.classList.remove('alerting'); }
+  toast('💪 Back to it!');
+}
+// ─── End Standalone Rest Timer ───────────────────────────
 
 function saveSession() {
   const ex = state.activeSession?.exercise;
@@ -3591,21 +3819,47 @@ function renderWater() {
   const goal = settings.waterGoal || 2000;
   const today = getTodayWater(waterLog);
   const pct = Math.min(100, (today / goal) * 100);
+  const goalHit = today >= goal;
 
   // Fix: Water fill should be height from bottom
   const waterFill = document.getElementById('water-fill');
   if (waterFill) {
     waterFill.style.height = pct + '%';
   }
-  
-  const currentMl = document.getElementById('water-current-ml');
+
+  // ── Goal-reached glow ──────────────────────────────────────
+  const bottle = document.getElementById('water-fill')?.closest('.water-bottle') ||
+                 document.querySelector('.water-bottle');
+  const pctEl  = document.getElementById('water-pct');
+
+  if (bottle)  bottle.classList.toggle('goal-reached', goalHit);
+  if (pctEl)   pctEl.classList.toggle('goal-reached', goalHit);
+
+  // ── Dashboard water bar glow ───────────────────────────────
+  const dashBar = document.getElementById('dash-water-bar');
+  if (dashBar) dashBar.classList.toggle('goal-reached', goalHit);
+
+  // ── Play fanfare once per goal crossing ────────────────────
+  const todayKey = new Date().toISOString().split('T')[0];
+  const celebKey = `jimbuddy_water_goal_celebrated_${todayKey}`;
+  if (goalHit && !sessionStorage.getItem(celebKey)) {
+    sessionStorage.setItem(celebKey, '1');
+    if (typeof SoundManager !== 'undefined' && SoundManager.goalReached) {
+      setTimeout(() => SoundManager.goalReached(), 120);
+    }
+    // Spawn bubble particles inside the bottle
+    if (bottle) _spawnWaterBubbles(bottle);
+    setTimeout(() => toast('🎉 Water goal reached! Great job!'), 200);
+  }
+
+  // ── Text fields ────────────────────────────────────────────
+  const currentMl  = document.getElementById('water-current-ml');
   const goalDisplay = document.getElementById('water-goal-display');
-  const goalInput = document.getElementById('water-goal-input');
-  const pctEl = document.getElementById('water-pct');
-  if (currentMl) currentMl.textContent = today;
+  const goalInput   = document.getElementById('water-goal-input');
+  if (currentMl)   currentMl.textContent  = today;
   if (goalDisplay) goalDisplay.textContent = goal;
-  if (goalInput) goalInput.value = goal;
-  if (pctEl) pctEl.textContent = Math.round(pct) + '%';
+  if (goalInput)   goalInput.value         = goal;
+  if (pctEl)       pctEl.textContent       = Math.round(pct) + '%';
 
   // Log
   const todayLogs = waterLog.filter(l => l.date.startsWith(new Date().toISOString().split('T')[0]));
@@ -3618,6 +3872,30 @@ function renderWater() {
             <span class="water-log-time">${formatTime12(l.date)}</span>
           </div>`).join('')
       : '<p class="muted-text">No water logged today yet.</p>';
+  }
+}
+
+// ─── Bubble particle burst inside the water bottle on goal hit ───
+function _spawnWaterBubbles(bottleEl) {
+  // Skip on low-end devices or reduced-motion
+  if (document.body.classList.contains('low-end') ||
+      document.body.classList.contains('performance-mode') ||
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+  const count = 8;
+  for (let i = 0; i < count; i++) {
+    setTimeout(() => {
+      const b = document.createElement('div');
+      b.className = 'water-goal-bubble';
+      b.style.left = (15 + Math.random() * 70) + '%';
+      b.style.width  = (4 + Math.random() * 5) + 'px';
+      b.style.height = b.style.width;
+      b.style.animationDuration = (0.9 + Math.random() * 0.6) + 's';
+      b.style.animationDelay   = (Math.random() * 0.2) + 's';
+      bottleEl.appendChild(b);
+      // Remove after animation completes
+      setTimeout(() => b.remove(), 1600);
+    }, i * 60);
   }
 }
 
@@ -4156,11 +4434,8 @@ function openQueueExerciseModal(queueIndex) {
   body.innerHTML = `
     <div class="session-exercise-title">${escHtml(exercise.name)}</div>
     ${setsHtml}
-    <div class="rest-timer" id="rest-timer-box">
-      <div class="timer-display" id="timer-display">0:00</div>
-      <div class="timer-label">REST · tap to skip</div>
-      <button class="btn btn-sm btn-ghost" style="margin-top:8px" onclick="skipTimer()">Skip</button>
-    </div>
+    ${!isCardio ? buildProgressiveOverloadTip(exercise) : ''}
+    ${restTimerMarkup()}
   `;
   
   openModal('session-modal');
@@ -4350,19 +4625,20 @@ if (getAuthUser()) {
   setTimeout(() => syncUserDataToCloud(), 500);
 }
 
-// Add to the end of saveWorkout function
-if (getAuthUser()) {
-  setTimeout(() => syncUserDataToCloud(), 300);
 }
 
-// Add a periodic auto-sync (every 5 minutes)
+// Periodic auto-sync (every 5 minutes) — created ONCE at module load,
+// not inside saveFullSession(). Previously this setInterval lived inside
+// saveFullSession() itself, so every saved session spawned ANOTHER
+// permanent interval that was never cleared — after a few workouts in
+// one sitting you'd have several parallel sync loops running forever,
+// adding needless background CPU/network load (worse on weaker Android
+// devices).
 setInterval(() => {
   if (getAuthUser()) {
     syncUserDataToCloud();
   }
 }, 5 * 60 * 1000);
-
-}
 
 // Quick toggle exercise completion (for testing)
 function quickCompleteExercise(index) {

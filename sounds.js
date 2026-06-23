@@ -131,6 +131,15 @@ const SoundManager = (() => {
   }
 
   /**
+   * Rest timer alarm — sharp repeating beep
+   * Used on: setInterval after rest countdown hits 0, until Finish is tapped
+   */
+  function alarmBeep() {
+    playTone({ frequency: 1100, type: 'square', gain: 0.22, duration: 0.16, attack: 0.003 });
+    playTone({ frequency: 1100, type: 'square', gain: 0.18, duration: 0.16, attack: 0.003, startTime: 0.22 });
+  }
+
+  /**
    * Water add — bubbly splash
    * Used on: addWater()
    */
@@ -208,8 +217,25 @@ const SoundManager = (() => {
     }
   }
 
+  /**
+   * Goal reached — ascending fanfare arpeggio + shimmer tail
+   * Used on: water goal hit, calorie goal hit
+   */
+  function goalReached() {
+    // Rising 5-note arpeggio (C-E-G-C-E one octave up)
+    const notes = [523, 659, 784, 1047, 1319];
+    notes.forEach((freq, i) => {
+      playTone({ frequency: freq, type: 'sine', gain: 0.18 - i * 0.01, duration: 0.18, attack: 0.008, startTime: i * 0.10 });
+    });
+    // Sparkle shimmer tail — high-frequency noise burst
+    playNoise({ gain: 0.06, duration: 0.18, filterFreq: 4000, startTime: 0.52 });
+    // Final soft chime linger
+    playTone({ frequency: 1047, type: 'sine', gain: 0.14, duration: 0.45, attack: 0.01, startTime: 0.60 });
+    playTone({ frequency: 1319, type: 'sine', gain: 0.10, duration: 0.40, attack: 0.01, startTime: 0.72 });
+  }
+
   // Public API
-  return { tap, check, uncheck, timerTick, timerTickWarn, timerDone, waterSplash, modalOpen, success, error, toggle, isEnabled, init };
+  return { tap, check, uncheck, timerTick, timerTickWarn, timerDone, alarmBeep, waterSplash, modalOpen, success, error, goalReached, toggle, isEnabled, init };
 })();
 
 // Auto-init when DOM is ready

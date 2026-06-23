@@ -276,7 +276,46 @@
             </div>
           </div>
 
-         
+          <!-- Standalone Rest Timer -->
+          <div class="card-premium standalone-rest-timer-card" style="margin-bottom: 16px;">
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+              <span style="font-size:20px;">⏱️</span>
+              <h4 style="font-size:16px; font-weight:700; color:var(--text);">Rest Timer</h4>
+              <span style="font-size:11px; color:var(--text3); margin-left:auto;">tap a preset or enter custom</span>
+            </div>
+
+            <!-- Preset buttons -->
+            <div class="srt-presets">
+              <button class="srt-preset-btn" onclick="srtStart(30)">30s</button>
+              <button class="srt-preset-btn" onclick="srtStart(45)">45s</button>
+              <button class="srt-preset-btn" onclick="srtStart(60)">1m</button>
+              <button class="srt-preset-btn" onclick="srtStart(90)">90s</button>
+              <button class="srt-preset-btn" onclick="srtStart(120)">2m</button>
+              <button class="srt-preset-btn" onclick="srtStart(180)">3m</button>
+            </div>
+
+            <!-- Custom input row -->
+            <div style="display:flex; gap:8px; margin-top:10px; margin-bottom:14px;">
+              <input type="number" id="srt-custom-input" class="form-input" placeholder="Custom (sec)" inputmode="numeric" min="1" style="flex:1; margin:0;" />
+              <button class="btn btn-ghost btn-sm" onclick="srtStartCustom()" style="flex-shrink:0;">Start</button>
+            </div>
+
+            <!-- Ring + display (hidden until active) -->
+            <div id="srt-box" class="srt-box" style="display:none;">
+              <div class="srt-ring" id="srt-ring">
+                <div class="srt-ring-inner">
+                  <div class="timer-display srt-display" id="srt-display">0:00</div>
+                  <div class="timer-label" id="srt-label">resting…</div>
+                </div>
+              </div>
+              <div class="srt-actions">
+                <button class="btn btn-sm btn-ghost" onclick="srtSkip()">Skip</button>
+                <button class="btn btn-sm btn-ghost" id="srt-pause-btn" onclick="srtTogglePause()">⏸ Pause</button>
+                <button class="btn btn-sm timer-finish-btn" id="srt-finish-btn" onclick="srtFinish()" style="display:none;">🔇 Done</button>
+              </div>
+            </div>
+          </div>
+
           <!-- Search -->
 <div class="search-wrap" style="position: relative;">
   <input type="text" class="search-input" id="exercise-search" placeholder="Search exercises…" autocomplete="off" />
